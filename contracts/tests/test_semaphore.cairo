@@ -1,6 +1,6 @@
 /// Integration tests for Semaphore contract with Garaga Groth16 verifier
 use starknet::ContractAddress;
-use snforge_std::{declare, ContractClassTrait, DeclareResultTrait};
+use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address, stop_cheat_caller_address};
 
 use semaphore::ISemaphoreDispatcher;
 use semaphore::ISemaphoreDispatcherTrait;
@@ -348,4 +348,248 @@ fn test_multiple_groups_independent() {
     let root1 = dispatcher.get_merkle_root(1);
     let root2 = dispatcher.get_merkle_root(2);
     assert(root1 != root2, 'Roots should differ');
+}
+
+// ==================== Root History Tests ====================
+
+#[test]
+fn test_old_root_valid_after_new_member() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    // Add first member with root_a
+    let root_a: u256 = 0xaaa;
+    dispatcher.add_member(group_id, 0x111, root_a);
+
+    // Add second member with root_b — root_a should still be valid
+    let root_b: u256 = 0xbbb;
+    dispatcher.add_member(group_id, 0x222, root_b);
+
+    assert(dispatcher.is_valid_root(group_id, root_a), 'Old root should be valid');
+    assert(dispatcher.is_valid_root(group_id, root_b), 'New root should be valid');
+}
+
+#[test]
+fn test_signal_with_old_root_succeeds() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    // Add first member — proof generated against this root
+    let root_a: u256 = 0xaaa;
+    dispatcher.add_member(group_id, 0x111, root_a);
+
+    // Add second member — root changes to root_b
+    let root_b: u256 = 0xbbb;
+    dispatcher.add_member(group_id, 0x222, root_b);
+
+    // Signal with proof referencing root_a should still work
+    let nullifier: u256 = 0xcafe;
+    let proof = build_mock_proof(root_a, nullifier, 0x1234, 0x42);
+    dispatcher.send_signal(group_id, proof.span());
+
+    assert(dispatcher.is_nullifier_used(nullifier), 'Nullifier should be used');
+}
+
+#[test]
+fn test_root_outside_history_window_rejected() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    // Add first member with root_old
+    let root_old: u256 = 0xfade;
+    dispatcher.add_member(group_id, 0x001, root_old);
+
+    // Add 20 more members to push root_old out of the ring buffer (size = 20)
+    let mut i: u256 = 1;
+    loop {
+        if i > 20 {
+            break;
+        }
+        dispatcher.add_member(group_id, 0x100 + i, 0x1000 + i);
+        i += 1;
+    };
+
+    // root_old should no longer be valid (pushed out of ring buffer)
+    assert(!dispatcher.is_valid_root(group_id, root_old), 'Old root should be expired');
+
+    // Latest root should still be valid
+    let latest: u256 = 0x1000 + 20;
+    assert(dispatcher.is_valid_root(group_id, latest), 'Latest root should be valid');
+}
+
+#[test]
+fn test_is_valid_root_nonexistent_root() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+    dispatcher.add_member(group_id, 0x111, 0xaaa);
+
+    // Random root that was never added should be invalid
+    assert(!dispatcher.is_valid_root(group_id, 0xdeadbeef), 'Unknown root should be invalid');
+}
+
+#[test]
+fn test_root_history_independent_between_groups() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    dispatcher.create_group(1);
+    dispatcher.create_group(2);
+
+    dispatcher.add_member(1, 0x111, 0xaaa);
+    dispatcher.add_member(2, 0x222, 0xbbb);
+
+    // Group 1's root should not be valid for group 2
+    assert(dispatcher.is_valid_root(1, 0xaaa), 'Group 1 root should be valid');
+    assert(!dispatcher.is_valid_root(2, 0xaaa), 'Group 1 root invalid for grp 2');
+    assert(dispatcher.is_valid_root(2, 0xbbb), 'Group 2 root should be valid');
+}
+
+// ==================== Member Removal Tests ====================
+
+#[test]
+fn test_remove_member() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    let commitment: u256 = 0xaabbccdd;
+    let root_after_add: u256 = 0x1234567890;
+    dispatcher.add_member(group_id, commitment, root_after_add);
+
+    let root_after_remove: u256 = 0x9876543210;
+    dispatcher.remove_member(group_id, commitment, root_after_remove);
+
+    assert(dispatcher.get_merkle_root(group_id) == root_after_remove, 'Root should update on remove');
+}
+
+#[test]
+fn test_remove_member_decrements_count() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    dispatcher.add_member(group_id, 0x111, 0xaaa);
+    dispatcher.add_member(group_id, 0x222, 0xbbb);
+    assert(dispatcher.get_group_member_count(group_id) == 2, 'Count should be 2');
+
+    dispatcher.remove_member(group_id, 0x111, 0xccc);
+    assert(dispatcher.get_group_member_count(group_id) == 1, 'Count should be 1');
+}
+
+#[test]
+fn test_remove_member_root_in_history() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    let root_after_add: u256 = 0xaaa;
+    dispatcher.add_member(group_id, 0x111, root_after_add);
+
+    let root_after_remove: u256 = 0xbbb;
+    dispatcher.remove_member(group_id, 0x111, root_after_remove);
+
+    // Both roots should be valid in history
+    assert(dispatcher.is_valid_root(group_id, root_after_add), 'Add root should be in history');
+    assert(dispatcher.is_valid_root(group_id, root_after_remove), 'Remove root should be valid');
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_cannot_remove_from_empty_group() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    match safe_dispatcher.remove_member(group_id, 0x111, 0xaaa) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'Group has no members', *panic_data.at(0));
+        },
+    };
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_cannot_remove_from_nonexistent_group() {
+    let contract_address = deploy_semaphore();
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+
+    match safe_dispatcher.remove_member(999, 0x111, 0xaaa) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'Group does not exist', *panic_data.at(0));
+        },
+    };
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_only_admin_can_remove() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+    dispatcher.add_member(group_id, 0x111, 0xaaa);
+
+    // Cheat caller to a non-admin address
+    let non_admin: ContractAddress = 0x999.try_into().unwrap();
+    start_cheat_caller_address(contract_address, non_admin);
+
+    match safe_dispatcher.remove_member(group_id, 0x111, 0xbbb) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'Only admin can remove members', *panic_data.at(0));
+        },
+    };
+
+    stop_cheat_caller_address(contract_address);
+}
+
+#[test]
+fn test_signal_after_remove() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    // Add two members
+    let root_1: u256 = 0xaaa;
+    dispatcher.add_member(group_id, 0x111, root_1);
+    let root_2: u256 = 0xbbb;
+    dispatcher.add_member(group_id, 0x222, root_2);
+
+    // Remove first member
+    let root_after_remove: u256 = 0xccc;
+    dispatcher.remove_member(group_id, 0x111, root_after_remove);
+
+    // Signal with the post-removal root should work
+    let nullifier: u256 = 0xddd;
+    let proof = build_mock_proof(root_after_remove, nullifier, 0x1234, 0x42);
+    dispatcher.send_signal(group_id, proof.span());
+
+    assert(dispatcher.is_nullifier_used(nullifier), 'Nullifier should be used');
 }

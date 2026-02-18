@@ -4,6 +4,9 @@
 
 use super::verifier::{ISemaphoreVerifierDispatcher, ISemaphoreVerifierDispatcherTrait};
 
+/// Number of recent roots to keep per group (ring buffer size)
+pub const ROOT_HISTORY_SIZE: u8 = 20;
+
 #[starknet::interface]
 pub trait ISemaphore<TContractState> {
     /// Create a new group (caller becomes admin)
@@ -11,6 +14,14 @@ pub trait ISemaphore<TContractState> {
 
     /// Add a member — admin submits commitment (for tracking) and new merkle root (computed off-chain)
     fn add_member(
+        ref self: TContractState,
+        group_id: u256,
+        identity_commitment: u256,
+        new_merkle_root: u256,
+    );
+
+    /// Remove a member — admin submits commitment and new merkle root (computed off-chain after zeroing leaf)
+    fn remove_member(
         ref self: TContractState,
         group_id: u256,
         identity_commitment: u256,
@@ -36,13 +47,19 @@ pub trait ISemaphore<TContractState> {
 
     /// Get the admin of a group
     fn get_group_admin(self: @TContractState, group_id: u256) -> starknet::ContractAddress;
+
+    /// Check if a root is valid (present in the root history) for a group
+    fn is_valid_root(self: @TContractState, group_id: u256, root: u256) -> bool;
 }
 
 #[starknet::contract]
 pub mod Semaphore {
+    use core::poseidon::PoseidonTrait;
+    use core::hash::HashStateTrait;
     use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess, StoragePointerWriteAccess};
     use starknet::{ContractAddress, get_caller_address};
     use super::{ISemaphoreVerifierDispatcher, ISemaphoreVerifierDispatcherTrait};
+    use super::ROOT_HISTORY_SIZE;
 
     #[storage]
     struct Storage {
@@ -58,6 +75,10 @@ pub mod Semaphore {
         merkle_roots: Map<u256, u256>,
         /// Used nullifiers (global)
         used_nullifiers: Map<u256, bool>,
+        /// Ring buffer of recent roots per group: composite_key(group_id, index) -> root
+        root_history: Map<felt252, u256>,
+        /// Current write index in the ring buffer per group
+        root_history_index: Map<u256, u8>,
     }
 
     #[event]
@@ -65,6 +86,7 @@ pub mod Semaphore {
     pub enum Event {
         GroupCreated: GroupCreated,
         MemberAdded: MemberAdded,
+        MemberRemoved: MemberRemoved,
         SignalProcessed: SignalProcessed,
     }
 
@@ -81,6 +103,14 @@ pub mod Semaphore {
         pub group_id: u256,
         pub identity_commitment: u256,
         pub index: u256,
+        pub merkle_root: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct MemberRemoved {
+        #[key]
+        pub group_id: u256,
+        pub identity_commitment: u256,
         pub merkle_root: u256,
     }
 
@@ -128,8 +158,16 @@ pub mod Semaphore {
 
             let index = self.member_counts.read(group_id);
 
-            // Update root to admin-provided value (computed off-chain with BN254-Poseidon)
+            // Update latest root
             self.merkle_roots.write(group_id, new_merkle_root);
+
+            // Write new root to ring buffer
+            let history_idx = self.root_history_index.read(group_id);
+            let key = composite_root_key(group_id, history_idx);
+            self.root_history.write(key, new_merkle_root);
+            // Advance ring buffer index (mod ROOT_HISTORY_SIZE)
+            let next_idx = (history_idx + 1) % ROOT_HISTORY_SIZE;
+            self.root_history_index.write(group_id, next_idx);
 
             // Increment member count
             self.member_counts.write(group_id, index + 1);
@@ -138,6 +176,43 @@ pub mod Semaphore {
                 .emit(
                     MemberAdded {
                         group_id, identity_commitment, index, merkle_root: new_merkle_root,
+                    },
+                );
+        }
+
+        fn remove_member(
+            ref self: ContractState,
+            group_id: u256,
+            identity_commitment: u256,
+            new_merkle_root: u256,
+        ) {
+            assert(self.group_exists.read(group_id), 'Group does not exist');
+
+            let caller = get_caller_address();
+            let admin = self.group_admins.read(group_id);
+            assert(caller == admin, 'Only admin can remove members');
+
+            let count = self.member_counts.read(group_id);
+            assert(count > 0, 'Group has no members');
+
+            // Update latest root
+            self.merkle_roots.write(group_id, new_merkle_root);
+
+            // Write new root to ring buffer
+            let history_idx = self.root_history_index.read(group_id);
+            let key = composite_root_key(group_id, history_idx);
+            self.root_history.write(key, new_merkle_root);
+            // Advance ring buffer index (mod ROOT_HISTORY_SIZE)
+            let next_idx = (history_idx + 1) % ROOT_HISTORY_SIZE;
+            self.root_history_index.write(group_id, next_idx);
+
+            // Decrement member count
+            self.member_counts.write(group_id, count - 1);
+
+            self
+                .emit(
+                    MemberRemoved {
+                        group_id, identity_commitment, merkle_root: new_merkle_root,
                     },
                 );
         }
@@ -165,9 +240,8 @@ pub mod Semaphore {
             let message = *public_inputs.at(2);
             let scope = *public_inputs.at(3);
 
-            // Verify merkle root matches group's stored root
-            let stored_root = self.merkle_roots.read(group_id);
-            assert(merkle_root == stored_root, 'Merkle root mismatch');
+            // Verify merkle root matches any root in the group's history
+            assert(check_root_history(@self, group_id, merkle_root), 'Merkle root mismatch');
 
             // Verify nullifier not already used
             assert(!self.used_nullifiers.read(nullifier), 'Nullifier already used');
@@ -198,5 +272,39 @@ pub mod Semaphore {
         fn get_group_admin(self: @ContractState, group_id: u256) -> ContractAddress {
             self.group_admins.read(group_id)
         }
+
+        fn is_valid_root(self: @ContractState, group_id: u256, root: u256) -> bool {
+            check_root_history(self, group_id, root)
+        }
+    }
+
+    /// Check if a root is in the group's root history or is the current root
+    fn check_root_history(self: @ContractState, group_id: u256, root: u256) -> bool {
+        // Check latest root first (fast path)
+        if root == self.merkle_roots.read(group_id) {
+            return true;
+        }
+        // Search ring buffer
+        let mut i: u8 = 0;
+        loop {
+            if i >= ROOT_HISTORY_SIZE {
+                break false;
+            }
+            let key = composite_root_key(group_id, i);
+            let stored = self.root_history.read(key);
+            if stored == root && stored != 0 {
+                break true;
+            }
+            i += 1;
+        }
+    }
+
+    /// Compute a composite storage key from group_id and ring buffer index
+    fn composite_root_key(group_id: u256, index: u8) -> felt252 {
+        PoseidonTrait::new()
+            .update(group_id.low.into())
+            .update(group_id.high.into())
+            .update(index.into())
+            .finalize()
     }
 }

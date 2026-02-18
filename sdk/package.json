@@ -1,0 +1,29 @@
+{
+  "name": "semaphore-starknet-sdk",
+  "version": "0.1.0",
+  "description": "SDK for Semaphore on StarkNet — Groth16 proof generation and Garaga calldata encoding",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "extract-vk": "npx tsx scripts/extract-vk.ts",
+    "generate-proof": "npx tsx scripts/generate-proof.ts",
+    "e2e-test": "npx tsx scripts/e2e-test.ts",
+    "e2e-integration": "npx tsx scripts/e2e-integration.ts"
+  },
+  "dependencies": {
+    "@semaphore-protocol/core": "^4.0.0",
+    "@semaphore-protocol/group": "^4.0.0",
+    "@semaphore-protocol/identity": "^4.0.0",
+    "@semaphore-protocol/proof": "^4.0.0",
+    "garaga": "^1.0.1",
+    "snarkjs": "^0.7.0",
+    "starknet": "^9.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/snarkjs": "^0.7.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
