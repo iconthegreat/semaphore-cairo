@@ -216,12 +216,15 @@ async function main() {
   assert(BigInt(memberCount as any) === 1n, "Member count is 1");
 
   // ── 8. Generate proof ─────────────────────────────────────────────
-  console.log("\n8. Generating Groth16 proof...");
+  console.log("\n8. Generating Groth16 proof (depth-20 circuit)...");
   const startTime = Date.now();
-  const proof = await generateProof(identity, group, MESSAGE, SCOPE);
+  // Use depth-20 explicitly: pads Merkle siblings with zeros for shallow trees.
+  // The on-chain verifier uses the depth-20 VK, which is production-sized.
+  const proof = await generateProof(identity, group, MESSAGE, SCOPE, 20);
   const elapsed = Date.now() - startTime;
-  console.log(`  Proof generated in ${elapsed}ms`);
+  console.log(`  Proof generated in ${elapsed}ms (merkleTreeDepth=${proof.merkleTreeDepth})`);
   assert(proof.points.length === 8, "Proof has 8 curve points");
+  assert(proof.merkleTreeDepth === 20, "Proof uses depth-20 circuit");
 
   // ── 9. Encode via Garaga ──────────────────────────────────────────
   console.log("\n9. Encoding proof via Garaga...");

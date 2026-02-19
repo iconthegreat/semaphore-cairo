@@ -42,9 +42,11 @@ async function main() {
   console.log(`   Group root:  ${group.root}`);
 
   // 3. Generate Groth16 proof
-  console.log("\n3. Generating Groth16 proof (downloads ~60MB artifacts on first run)...");
+  console.log("\n3. Generating Groth16 proof (depth-20, downloads ~60MB artifacts on first run)...");
   const startTime = Date.now();
-  const proof = await generateProof(identity, group, MESSAGE, SCOPE);
+  // Always use depth-20 to match the on-chain verifier's baked-in VK.
+  // generateProof pads missing Merkle siblings with zeros for shallow trees.
+  const proof = await generateProof(identity, group, MESSAGE, SCOPE, 20);
   const elapsed = Date.now() - startTime;
   console.log(`   Proof generated in ${elapsed}ms`);
   console.log(`   Merkle root: ${proof.merkleTreeRoot}`);
@@ -122,7 +124,9 @@ async function main() {
   console.log(`   Calldata encoding:   ${calldata[0] === "ENCODING_PENDING" ? "PENDING (needs garaga Python)" : "COMPLETE"}`);
 }
 
-main().catch((err) => {
-  console.error("Error:", err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("Error:", err);
+    process.exit(1);
+  });
