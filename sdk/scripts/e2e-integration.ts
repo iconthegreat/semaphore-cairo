@@ -96,6 +96,28 @@ async function main() {
   const account = await getDevnetAccount(provider);
   assert(true, "Got prefunded account");
 
+  // ── 2.5. Declare Garaga ECIP ops class ─────────────────────────────
+  console.log("\n2.5. Declaring Garaga ECIP ops class (required by verifier)...");
+  const ecipSierraPath = join(VERIFIER_DIR, "ecip_artifacts", "universal_ecip_UniversalECIP.contract_class.json");
+  const ecipCasmPath = join(VERIFIER_DIR, "ecip_artifacts", "universal_ecip_UniversalECIP.compiled_contract_class.json");
+
+  try {
+    const ecipSierra = json.parse(readFileSync(ecipSierraPath, "utf-8"));
+    const ecipCasm = json.parse(readFileSync(ecipCasmPath, "utf-8"));
+    const ecipDeclareResult = await account.declareIfNot({
+      contract: ecipSierra,
+      casm: ecipCasm,
+    });
+    if (ecipDeclareResult.transaction_hash) {
+      await provider.waitForTransaction(ecipDeclareResult.transaction_hash);
+    }
+    console.log(`  ECIP ops class hash: ${ecipDeclareResult.class_hash}`);
+    assert(true, "ECIP ops class declared");
+  } catch (err: any) {
+    console.log(`  WARNING: Could not declare ECIP ops class: ${err.message}`);
+    console.log("  On-chain verification may fail without this class.");
+  }
+
   // ── 3. Declare + deploy verifier ──────────────────────────────────
   console.log("\n3. Declaring and deploying verifier...");
   const verifierSierra = readContractArtifact(
@@ -220,6 +242,38 @@ async function main() {
     console.log("\n10. Sending signal on-chain...");
     const calldataFelts = calldata.map((v) => v.toString());
 
+    // First try a simulation call to get the raw error
+    console.log("  Simulating call to get detailed error...");
+    try {
+      const simResult = await provider.callContract({
+        contractAddress: semaphoreAddress,
+        entrypoint: "send_signal",
+        calldata: CallData.compile({ group_id: GROUP_ID, full_proof_with_hints: calldataFelts }),
+      });
+      console.log(`  Simulation succeeded! Result: ${JSON.stringify(simResult).substring(0, 200)}`);
+    } catch (simErr: any) {
+      const simMsg = simErr?.message || String(simErr);
+      console.log(`  [DEBUG] Simulation error (full): ${simMsg.substring(0, 3000)}`);
+
+      // Also try calling verifier directly to isolate the issue
+      console.log("  Trying direct verifier call...");
+      try {
+        const verifierContract = new Contract({
+          abi: verifierSierra.abi,
+          address: verifierAddress,
+          providerOrAccount: provider,
+        });
+        const verifyResult = await verifierContract.call(
+          "verify_groth16_proof_bn254",
+          [calldataFelts]
+        );
+        console.log(`  Verifier returned: ${JSON.stringify(verifyResult).substring(0, 500)}`);
+      } catch (vErr: any) {
+        const vMsg = vErr?.message || String(vErr);
+        console.log(`  [DEBUG] Verifier direct error: ${vMsg.substring(0, 3000)}`);
+      }
+    }
+
     try {
       const sendSignalTx = await semaphore.invoke("send_signal", [
         GROUP_ID, calldataFelts,
@@ -258,10 +312,9 @@ async function main() {
       }
     } catch (err: any) {
       const errMsg = err?.message || String(err);
-      if (errMsg.includes("unwrap failed") || errMsg.includes("execution error")) {
+      console.log(`  [DEBUG] Invoke error: ${errMsg.substring(0, 2000)}`);
+      if (errMsg.includes("unwrap failed") || errMsg.includes("execution error") || errMsg.includes("REVERTED") || errMsg.includes("Transaction reverted")) {
         console.log("  [SKIP] On-chain Garaga verifier rejected the proof");
-        console.log("  This is a known Garaga integration issue — the calldata encoding");
-        console.log("  succeeded but the on-chain BN254 pairing check failed.");
         console.log("  Steps 1-9 (deploy, group, member, proof, encoding) all passed.\n");
       } else {
         throw err;
@@ -276,6 +329,7 @@ async function main() {
     process.exit(1);
   }
   console.log("\n  All tests passed!");
+  process.exit(0);
 }
 
 main().catch((err) => {

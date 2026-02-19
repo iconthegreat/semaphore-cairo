@@ -1,0 +1,7 @@
+target/
+sdk/node_modules/
+sdk/bin/
+sdk/semaphore_verifier/
+.garaga-venv/
+scripts/deployed-addresses.json
+semaphore_verifier/target/

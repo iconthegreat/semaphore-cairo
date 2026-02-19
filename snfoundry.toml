@@ -1,0 +1,5 @@
+
+[sncast.devnet-deployer]
+account = "devnet-deployer"
+accounts-file = "/home/icon/.starknet_accounts/starknet_open_zeppelin_accounts.json"
+url = "http://127.0.0.1:5050/"
