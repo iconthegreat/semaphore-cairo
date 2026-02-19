@@ -89,7 +89,7 @@ if [[ "$NETWORK" == "devnet" ]]; then
   SNCAST_ACCOUNT="devnet-deployer"
 
 elif [[ "$NETWORK" == "sepolia" ]]; then
-  RPC_URL="${STARKNET_RPC_URL:-https://free-rpc.nethermind.io/sepolia-juno/v0_7}"
+  RPC_URL="${STARKNET_RPC_URL:-https://api.cartridge.gg/x/starknet/sepolia}"
   if [[ -z "${STARKNET_ACCOUNT:-}" ]]; then
     echo "ERROR: STARKNET_ACCOUNT env var required for Sepolia deployment"
     echo "Set: export STARKNET_ACCOUNT=<your-account-name>"
