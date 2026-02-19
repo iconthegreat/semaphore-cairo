@@ -104,6 +104,43 @@ fi
 
 echo "==> Deploying to $NETWORK (rpc: $RPC_URL)"
 
+# ── 3.5. Declare Garaga ECIP ops class (required by verifier) ────────
+ECIP_SIERRA="$VERIFIER_DIR/ecip_artifacts/universal_ecip_UniversalECIP.contract_class.json"
+ECIP_CASM="$VERIFIER_DIR/ecip_artifacts/universal_ecip_UniversalECIP.compiled_contract_class.json"
+
+if [[ "$NETWORK" == "devnet" && -f "$ECIP_SIERRA" && -f "$ECIP_CASM" ]]; then
+  echo "==> Declaring Garaga ECIP ops class on devnet..."
+  # Use node.js to declare since sncast requires a Scarb project
+  ECIP_RESULT=$(cd "$PROJECT_ROOT/sdk" && node -e "
+    const { RpcProvider, Account, Signer, json } = require('starknet');
+    const fs = require('fs');
+    (async () => {
+      const provider = new RpcProvider({nodeUrl: '$RPC_URL'});
+      const signer = new Signer('$PRIVATE_KEY');
+      const account = new Account({provider, address: '$ACCOUNT_ADDRESS', signer});
+      const sierra = json.parse(fs.readFileSync('$ECIP_SIERRA', 'utf-8'));
+      const casm = json.parse(fs.readFileSync('$ECIP_CASM', 'utf-8'));
+      try {
+        const result = await account.declareIfNot({contract: sierra, casm});
+        if (result.transaction_hash) {
+          await provider.waitForTransaction(result.transaction_hash);
+        }
+        console.log('class_hash:' + result.class_hash);
+      } catch(e) {
+        if (e.message && e.message.includes('already declared')) {
+          console.log('class_hash:already_declared');
+        } else {
+          console.error(e.message);
+          process.exit(1);
+        }
+      }
+    })();
+  " 2>&1)
+  echo "   ECIP ops: $ECIP_RESULT"
+else
+  echo "==> Skipping ECIP declaration (already on Sepolia or artifacts missing)"
+fi
+
 # ── 4. Declare & deploy verifier ──────────────────────────────────────
 echo "==> Declaring verifier..."
 
