@@ -225,7 +225,7 @@ async function encodeCalldata(proof: any): Promise<string[]> {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static(__dirname)); // serves index.html, bundle.js, style.css
+app.use(express.static(join(__dirname, "public"))); // serves index.html, bundle.js, style.css
 
 // GET /api/state — current group + vote state
 app.get("/api/state", (_req, res) => {

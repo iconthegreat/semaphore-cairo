@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Semaphore Usecase Demo on StarkNet</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-title"><span>Semaphore</span> Usecase Demo on StarkNet</div>
+    <div class="header-sub">Anonymous zero-knowledge voting — no one knows how you voted</div>
+    <div class="header-badge">Sepolia Testnet</div>
+  </div>
+
+  <!-- Question + Live Results -->
+  <div class="question-box" id="results-box">
+    <div class="question-text" id="question-text">Loading...</div>
+    <div class="vote-bars">
+      <div class="vote-bar-row">
+        <div class="vote-label">YES</div>
+        <div class="bar-track"><div class="bar-fill yes" id="bar-yes" style="width:0%"></div></div>
+        <div class="vote-count" id="count-yes">0</div>
+      </div>
+      <div class="vote-bar-row">
+        <div class="vote-label">NO</div>
+        <div class="bar-track"><div class="bar-fill no" id="bar-no" style="width:0%"></div></div>
+        <div class="vote-count" id="count-no">0</div>
+      </div>
+    </div>
+    <div class="total-votes" id="total-votes">0 votes cast · Group members: 0</div>
+  </div>
+
+  <!-- Steps -->
+  <div class="steps">
+
+    <!-- Step 1: Identity -->
+    <div class="step active" id="step-1">
+      <div class="step-header">
+        <div class="step-num">1</div>
+        <div class="step-title">Generate your identity</div>
+        <div class="step-status" id="step1-status">—</div>
+      </div>
+      <div class="step-body">
+        <div>
+          <label>Secret key (saved locally, never sent to server)</label>
+          <div class="input-row">
+            <div class="secret-field flex-1">
+              <input type="password" id="secret-input" placeholder="Enter a secret phrase or generate one" />
+              <button class="reveal-btn" id="reveal-btn" onclick="toggleReveal()">show</button>
+            </div>
+            <button class="btn-secondary" onclick="generateIdentity()">Random</button>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="load-identity-btn" onclick="loadIdentity()">
+          Load Identity
+        </button>
+
+        <div id="identity-display" class="hidden">
+          <div class="info-row">
+            <span class="label">Commitment:</span>
+            <span class="mono-addr" id="commitment-display"></span>
+          </div>
+          <div class="mt-4 info-row">
+            <span class="label">Status:</span>
+            <span class="tag tag-green">Identity ready</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Join Group -->
+    <div class="step disabled" id="step-2">
+      <div class="step-header">
+        <div class="step-num">2</div>
+        <div class="step-title">Join the voting group</div>
+        <div class="step-status" id="step2-status">—</div>
+      </div>
+      <div class="step-body">
+        <div class="info-row">
+          <span class="label">Members in group:</span>
+          <span class="tag tag-purple" id="member-count-badge">0</span>
+        </div>
+
+        <div id="join-action">
+          <button class="btn-primary" id="join-btn" onclick="joinGroup()">
+            Join Group
+          </button>
+          <div class="status-box info mt-8">
+            Your identity commitment will be added to the on-chain group.
+            The admin signs the transaction — you don't need STRK.
+          </div>
+          <div class="status-box warning mt-8">
+            <strong>Demo notice:</strong> This group is open — anyone can join.
+            In a real deployment, membership would be gated (e.g. token ownership,
+            ticket verification, or admin allowlist). The admin here auto-approves
+            all requests, which is a trust assumption.
+          </div>
+        </div>
+
+        <div id="join-status" class="hidden"></div>
+        <div id="already-member" class="hidden">
+          <div class="status-box success">✓ You are a member of this group</div>
+          <div class="info-row mt-8">
+            <span class="label">Tx:</span>
+            <a id="join-tx-link" class="tx-link" target="_blank">—</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Vote -->
+    <div class="step disabled" id="step-3">
+      <div class="step-header">
+        <div class="step-num">3</div>
+        <div class="step-title">Cast your anonymous vote</div>
+        <div class="step-status" id="step3-status">—</div>
+      </div>
+      <div class="step-body">
+
+        <div id="vote-action">
+          <div class="vote-buttons">
+            <button class="btn-yes" id="btn-yes" onclick="selectVote('yes')">YES</button>
+            <button class="btn-no"  id="btn-no"  onclick="selectVote('no')">NO</button>
+          </div>
+
+          <button class="btn-primary" id="cast-btn" onclick="castVote()" disabled>
+            Cast Vote
+          </button>
+
+          <div class="status-box info">
+            Your vote is anonymous. The ZK proof proves you're a group member
+            without revealing your identity. You can only vote once.
+          </div>
+        </div>
+
+        <div id="vote-progress" class="hidden">
+          <div class="status-box info">
+            <div class="progress-steps">
+              <div class="progress-step" id="prog-proof">
+                <span class="icon">○</span> Generating ZK proof (first run downloads ~50MB circuit)
+              </div>
+              <div class="progress-step pending" id="prog-encode">
+                <span class="icon">○</span> Encoding calldata via Garaga
+              </div>
+              <div class="progress-step pending" id="prog-submit">
+                <span class="icon">○</span> Submitting to Sepolia
+              </div>
+              <div class="progress-step pending" id="prog-confirm">
+                <span class="icon">○</span> Waiting for confirmation
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="vote-result" class="hidden"></div>
+
+        <div id="already-voted" class="hidden">
+          <div class="status-box success">
+            ✓ You already cast your vote: <strong id="my-vote-display"></strong>
+          </div>
+          <div class="info-row mt-8">
+            <span class="label">Tx:</span>
+            <a id="vote-tx-link" class="tx-link" target="_blank">—</a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /steps -->
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>Semaphore Usecase Demo on StarkNet · <a class="tx-link" href="https://github.com/0x69636F6E/semaphore-cairo" target="_blank">source</a></span>
+    <span id="contract-link">
+      Contract: <a id="contract-addr-link" class="tx-link" target="_blank"></a>
+    </span>
+  </div>
+
+</div><!-- /app -->
+
+<script src="bundle.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let identity = null;
+let myCommitment = null;
+let selectedVote = null;  // 'yes' | 'no'
+let serverState = null;
+let isInGroup = false;
+let hasVoted = false;
+let myVoteChoice = null;
+let myNullifier = null;
+let myVoteTxHash = null;
+
+const EXPLORER = 'https://sepolia.voyager.online/tx/';
+
+// ── Init ───────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  restoreLocalState();
+  await refreshState();
+  setInterval(refreshState, 15_000);  // poll every 15s
+});
+
+function restoreLocalState() {
+  const storedSecret = localStorage.getItem('semaphore-secret');
+  if (storedSecret) {
+    document.getElementById('secret-input').value = storedSecret;
+    try {
+      identity = SemaphoreCairo.createIdentity(storedSecret);
+      myCommitment = SemaphoreCairo.getCommitment(identity);
+      showIdentity();
+    } catch(e) {
+      localStorage.removeItem('semaphore-secret');
+    }
+  }
+  myNullifier = localStorage.getItem('semaphore-nullifier');
+  myVoteChoice = localStorage.getItem('semaphore-vote-choice');
+  myVoteTxHash = localStorage.getItem('semaphore-vote-tx');
+  hasVoted = !!myNullifier;
+}
+
+async function refreshState() {
+  try {
+    const resp = await fetch('/api/state');
+    serverState = await resp.json();
+    updateResults();
+    updateGroupStatus();
+    updateVoteStatus();
+    updateContractLink();
+  } catch(e) {
+    console.error('Failed to fetch state:', e);
+  }
+}
+
+// ── Results ────────────────────────────────────────────────────────────────
+function updateResults() {
+  if (!serverState) return;
+  const { question, yesVotes, noVotes, memberCount } = serverState;
+  const total = yesVotes + noVotes;
+
+  document.getElementById('question-text').textContent = question;
+  document.getElementById('count-yes').textContent = yesVotes;
+  document.getElementById('count-no').textContent = noVotes;
+  document.getElementById('total-votes').textContent =
+    `${total} vote${total !== 1 ? 's' : ''} cast · ${memberCount} group member${memberCount !== 1 ? 's' : ''}`;
+  document.getElementById('member-count-badge').textContent = memberCount;
+
+  const yesW = total > 0 ? Math.round((yesVotes / total) * 100) : 0;
+  const noW  = total > 0 ? Math.round((noVotes  / total) * 100) : 0;
+  document.getElementById('bar-yes').style.width = yesW + '%';
+  document.getElementById('bar-no').style.width  = noW  + '%';
+}
+
+function updateContractLink() {
+  if (!serverState) return;
+  const addr = serverState.contractAddress;
+  const el = document.getElementById('contract-addr-link');
+  el.textContent = addr.slice(0, 10) + '...' + addr.slice(-8);
+  el.href = `https://sepolia.voyager.online/contract/${addr}`;
+}
+
+// ── Group status ───────────────────────────────────────────────────────────
+function updateGroupStatus() {
+  if (!serverState || !myCommitment) return;
+  isInGroup = serverState.commitments.includes(myCommitment);
+  if (isInGroup) {
+    enableStep(2, true);
+    document.getElementById('step2-status').textContent = '✓ member';
+    document.getElementById('join-action').classList.add('hidden');
+    document.getElementById('already-member').classList.remove('hidden');
+    enableStep(3, false);
+  } else {
+    enableStep(2, false);
+  }
+}
+
+// ── Vote status ────────────────────────────────────────────────────────────
+function updateVoteStatus() {
+  if (!hasVoted) return;
+  // Check server-side too (in case localStorage was cleared)
+  if (myNullifier) {
+    fetch('/api/check-nullifier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nullifier: myNullifier })
+    }).then(r => r.json()).then(data => {
+      if (data.used) showAlreadyVoted(myVoteChoice || data.choice, myVoteTxHash);
+    });
+  }
+}
+
+// ── Identity ───────────────────────────────────────────────────────────────
+function generateIdentity() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const words = Array.from({length: 4}, () =>
+    Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  );
+  document.getElementById('secret-input').value = words.join('-');
+}
+
+function loadIdentity() {
+  const secret = document.getElementById('secret-input').value.trim();
+  if (!secret) { alert('Enter a secret phrase first.'); return; }
+  try {
+    identity = SemaphoreCairo.createIdentity(secret);
+    myCommitment = SemaphoreCairo.getCommitment(identity);
+    localStorage.setItem('semaphore-secret', secret);
+    showIdentity();
+    updateGroupStatus();
+    updateVoteStatus();
+  } catch(e) {
+    alert('Failed to create identity: ' + e.message);
+  }
+}
+
+function showIdentity() {
+  document.getElementById('identity-display').classList.remove('hidden');
+  const addr = myCommitment;
+  document.getElementById('commitment-display').textContent =
+    addr.length > 40 ? addr.slice(0, 20) + '...' + addr.slice(-12) : addr;
+  markStepDone(1);
+  document.getElementById('step1-status').textContent = '✓ ready';
+  if (!isInGroup) enableStep(2, false);
+}
+
+function toggleReveal() {
+  const inp = document.getElementById('secret-input');
+  const btn = document.getElementById('reveal-btn');
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'hide'; }
+  else { inp.type = 'password'; btn.textContent = 'show'; }
+}
+
+// ── Join ───────────────────────────────────────────────────────────────────
+async function joinGroup() {
+  if (!identity || !myCommitment) { alert('Load your identity first.'); return; }
+  const btn = document.getElementById('join-btn');
+  const statusDiv = document.getElementById('join-status');
+
+  btn.disabled = true;
+  btn.textContent = 'Joining...';
+  statusDiv.className = 'status-box info';
+  statusDiv.innerHTML = '<span class="spinner"></span> Adding your commitment on-chain...';
+  statusDiv.classList.remove('hidden');
+
+  try {
+    const resp = await fetch('/api/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commitment: myCommitment })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Failed to join');
+
+    if (data.alreadyMember) {
+      statusDiv.classList.add('hidden');
+      document.getElementById('join-action').classList.add('hidden');
+      document.getElementById('already-member').classList.remove('hidden');
+    } else {
+      statusDiv.classList.add('hidden');
+      document.getElementById('join-action').classList.add('hidden');
+      const alreadyMemberDiv = document.getElementById('already-member');
+      alreadyMemberDiv.classList.remove('hidden');
+      const txLink = document.getElementById('join-tx-link');
+      txLink.textContent = data.txHash.slice(0, 18) + '...';
+      txLink.href = EXPLORER + data.txHash;
+    }
+
+    isInGroup = true;
+    markStepDone(2);
+    document.getElementById('step2-status').textContent = '✓ member';
+    enableStep(3, false);
+    await refreshState();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'Join Group';
+    statusDiv.className = 'status-box error';
+    statusDiv.textContent = '✗ ' + e.message;
+  }
+}
+
+// ── Vote ───────────────────────────────────────────────────────────────────
+function selectVote(choice) {
+  selectedVote = choice;
+  document.getElementById('btn-yes').classList.toggle('selected', choice === 'yes');
+  document.getElementById('btn-no').classList.toggle('selected', choice === 'no');
+  document.getElementById('cast-btn').disabled = false;
+}
+
+async function castVote() {
+  if (!selectedVote) return;
+  if (!identity || !serverState) return;
+
+  // Switch to progress view
+  document.getElementById('vote-action').classList.add('hidden');
+  document.getElementById('vote-progress').classList.remove('hidden');
+
+  const progProof  = document.getElementById('prog-proof');
+  const progEncode = document.getElementById('prog-encode');
+  const progSubmit = document.getElementById('prog-submit');
+  const progConfirm = document.getElementById('prog-confirm');
+
+  function setActive(el) {
+    el.classList.remove('pending');
+    el.classList.add('active');
+    el.querySelector('.icon').textContent = '◉';
+  }
+  function setDone(el) {
+    el.classList.remove('active', 'pending');
+    el.classList.add('done');
+    el.querySelector('.icon').textContent = '✓';
+  }
+
+  try {
+    // Step 1: Generate ZK proof
+    setActive(progProof);
+    const group = SemaphoreCairo.createGroup(serverState.commitments);
+    const message = selectedVote === 'yes' ? 1n : 2n;
+    const scope = BigInt(serverState.scope);
+    const proof = await SemaphoreCairo.generateSemaphoreProof(identity, group, message, scope);
+    setDone(progProof);
+
+    // Step 2: Server encodes + submits
+    setActive(progEncode);
+    const resp = await fetch('/api/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proof })
+    });
+
+    setDone(progEncode);
+    setActive(progSubmit);
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Vote failed');
+
+    setDone(progSubmit);
+    setActive(progConfirm);
+    // Tx already confirmed by server (waitForTransaction)
+    setDone(progConfirm);
+
+    // Save to localStorage
+    myNullifier = proof.nullifier;
+    myVoteChoice = selectedVote;
+    myVoteTxHash = data.txHash;
+    localStorage.setItem('semaphore-nullifier', myNullifier);
+    localStorage.setItem('semaphore-vote-choice', myVoteChoice);
+    localStorage.setItem('semaphore-vote-tx', myVoteTxHash);
+    hasVoted = true;
+
+    document.getElementById('vote-progress').classList.add('hidden');
+    showAlreadyVoted(selectedVote, data.txHash);
+    markStepDone(3);
+    document.getElementById('step3-status').textContent = '✓ voted';
+    await refreshState();
+
+  } catch(e) {
+    document.getElementById('vote-progress').classList.add('hidden');
+    document.getElementById('vote-action').classList.remove('hidden');
+
+    const resultDiv = document.getElementById('vote-result');
+    resultDiv.className = 'status-box error';
+    resultDiv.textContent = '✗ ' + e.message;
+    resultDiv.classList.remove('hidden');
+  }
+}
+
+function showAlreadyVoted(choice, txHash) {
+  document.getElementById('vote-action').classList.add('hidden');
+  document.getElementById('vote-progress').classList.add('hidden');
+  const div = document.getElementById('already-voted');
+  div.classList.remove('hidden');
+  const choiceLabel = choice === 'yes' ? 'YES' : 'NO';
+  document.getElementById('my-vote-display').textContent = choiceLabel;
+  if (txHash) {
+    const link = document.getElementById('vote-tx-link');
+    link.textContent = txHash.slice(0, 18) + '...';
+    link.href = EXPLORER + txHash;
+  }
+  markStepDone(3);
+  document.getElementById('step3-status').textContent = '✓ voted';
+}
+
+// ── Step helpers ───────────────────────────────────────────────────────────
+function enableStep(n, isDone) {
+  const el = document.getElementById('step-' + n);
+  el.classList.remove('disabled', 'done', 'active');
+  el.classList.add(isDone ? 'done' : 'active');
+}
+function markStepDone(n) {
+  const el = document.getElementById('step-' + n);
+  el.classList.remove('disabled', 'active');
+  el.classList.add('done');
+}
+</script>
+</body>
+</html>
