@@ -1,0 +1,8 @@
+{
+  "framework": null,
+  "buildCommand": "node build.mjs",
+  "functions": {
+    "api/vote.ts": { "maxDuration": 60 },
+    "api/join.ts": { "maxDuration": 30 }
+  }
+}
