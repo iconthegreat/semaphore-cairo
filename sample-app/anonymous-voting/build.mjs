@@ -7,7 +7,7 @@ await esbuild.build({
   target: "es2020",
   format: "iife",
   globalName: "SemaphoreCairo",
-  outfile: "bundle.js",
+  outfile: "public/bundle.js",
   // Polyfill Node.js built-ins for browser
   define: {
     "process.env.NODE_ENV": '"production"',
