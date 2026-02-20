@@ -309,7 +309,6 @@ function loadIdentity() {
   try {
     identity = SemaphoreCairo.createIdentity(secret);
     myCommitment = SemaphoreCairo.getCommitment(identity);
-    localStorage.setItem('semaphore-secret', secret);
     showIdentity();
     updateGroupStatus();
     updateVoteStatus();
