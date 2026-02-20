@@ -5,3 +5,8 @@ sdk/semaphore_verifier/
 .garaga-venv/
 scripts/deployed-addresses.json
 semaphore_verifier/target/
+
+# Sample app
+sample-app/**/node_modules/
+sample-app/**/bundle.js
+sample-app/**/state.json
