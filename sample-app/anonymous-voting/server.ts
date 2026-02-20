@@ -28,6 +28,10 @@ import { keccak256, toBeHex } from "ethers";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const PUBLIC_DIR = join(__dirname, "public");
+if (!existsSync(PUBLIC_DIR)) {
+  mkdirSync(PUBLIC_DIR, { recursive: true });
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -225,7 +229,7 @@ async function encodeCalldata(proof: any): Promise<string[]> {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static(__dirname)); // serves index.html, bundle.js, style.css
+app.use(express.static(PUBLIC_DIR)); // serves index.html, bundle.js, style.css
 
 // GET /api/state — current group + vote state
 app.get("/api/state", (_req, res) => {
