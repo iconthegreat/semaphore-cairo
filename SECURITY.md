@@ -9,7 +9,7 @@ This system uses **Groth16** over the BN254 curve, verified on-chain via [Garaga
 - Ceremony transcript: https://ceremony.pse.dev
 - Semaphore audit reports: https://semaphore.pse.dev/audits
 
-For applications requiring a trustless setup, consider migrating to a STARK-native proof system (no trusted setup required).
+**Phase 2 plan:** The Semaphore circuit will be rewritten natively in Cairo using STARKs, eliminating the trusted setup assumption entirely. STARKs are transparent — there is no ceremony, no toxic waste, and no single-point-of-failure in the proof system. This also resolves the BN254/Stark field mismatch, allowing the Merkle tree to move on-chain.
 
 ## Scope Design
 

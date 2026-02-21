@@ -383,7 +383,9 @@ cd semaphore_verifier
 
 ## Key Design Decisions
 
-**Groth16 over STARK proofs** — Semaphore V4's reference implementation uses Circom + BN254 Groth16. Reusing the same circuit and VK means the off-chain SDK is identical; only the on-chain verifier changes.
+**Groth16 over STARK proofs (Phase 1)** — Semaphore V4's reference implementation uses Circom + BN254 Groth16. Reusing the same circuit and VK means the off-chain SDK is identical to the EVM version; only the on-chain verifier changes. This is a pragmatic Phase 1 choice — Groth16 requires a [trusted setup ceremony](SECURITY.md#trusted-setup) and creates the BN254/Stark field mismatch that forces the Merkle tree off-chain.
+
+**Phase 2 — STARK-native circuit:** The Semaphore circuit (identity commitment, Merkle proof, nullifier derivation) will be rewritten natively in Cairo using STARKs. This eliminates the trusted setup entirely, removes the BN254/Stark field split (the Merkle tree can move on-chain), and simplifies the proof pipeline — no Garaga, no snarkjs, no Python dependency. The on-chain verifier becomes a native STARK verifier at a fraction of the current calldata size.
 
 **Off-chain Merkle tree** — StarkNet's Poseidon uses a different prime than BN254-Poseidon. A tree computed on-chain would produce different roots than the off-chain tree the proof is generated against. The admin manages the tree off-chain and anchors roots on-chain.
 
@@ -397,16 +399,32 @@ cd semaphore_verifier
 
 ## Limitations & Roadmap
 
+### Phase 1 — Groth16 (current)
+
 | Item | Status |
 |---|---|
-| Core contracts + 55 tests | ✅ Complete |
+| Core contracts + 63 tests | ✅ Complete |
 | Garaga verifier (depth-20) | ✅ Complete |
 | TypeScript SDK | ✅ Complete |
 | Sepolia deployment | ✅ Live |
+| SECURITY.md + audit hardening | ✅ Complete |
 | Frontend / wallet integration | ⬜ Not started |
 | Multisig group admin | ⬜ Not started |
 | Batch member addition | ⬜ Not started |
 | Security audit | ⬜ Required before mainnet |
+
+### Phase 2 — STARK-native circuit (planned)
+
+Rewrite the Semaphore circuit in Cairo/STARKs. This is the long-term architecture:
+
+| Item | Notes |
+|---|---|
+| Cairo Semaphore circuit | Identity commitment, Merkle proof, nullifier — all in STARK field |
+| On-chain Merkle tree | BN254/Stark mismatch gone — tree can live on-chain |
+| No trusted setup | STARKs are transparent — no ceremony, no toxic waste |
+| No Garaga / snarkjs dependency | Proof generation fully in Cairo toolchain |
+| Smaller calldata | ~1977 felt252s → native STARK proof format |
+| Recursive proofs | Native Cairo recursion enables aggregation |
 
 ---
 
