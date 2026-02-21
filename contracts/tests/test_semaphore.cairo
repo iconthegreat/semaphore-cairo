@@ -13,10 +13,11 @@ fn deploy_semaphore() -> ContractAddress {
     let verifier_class = declare("MockSemaphoreVerifier").unwrap().contract_class();
     let (verifier_address, _) = verifier_class.deploy(@ArrayTrait::new()).unwrap();
 
-    // Deploy Semaphore with verifier address as constructor arg
+    // Deploy Semaphore with verifier address and root_history_size as constructor args
     let semaphore_class = declare("Semaphore").unwrap().contract_class();
     let mut constructor_args = ArrayTrait::new();
     constructor_args.append(verifier_address.into());
+    constructor_args.append(20); // root_history_size
     let (contract_address, _) = semaphore_class.deploy(@constructor_args).unwrap();
     contract_address
 }
@@ -592,4 +593,108 @@ fn test_signal_after_remove() {
     dispatcher.send_signal(group_id, proof.span());
 
     assert(dispatcher.is_nullifier_used(nullifier), 'Nullifier should be used');
+}
+
+// ==================== Admin Transfer Tests ====================
+
+#[test]
+fn test_transfer_admin_two_step() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    let new_admin: ContractAddress = 0xdeadbeef.try_into().unwrap();
+
+    // Propose transfer
+    dispatcher.transfer_admin(group_id, new_admin);
+
+    // Pending admin should be set, current admin unchanged
+    let pending = dispatcher.get_pending_admin(group_id);
+    assert(pending == new_admin, 'Pending admin should be set');
+
+    let current = dispatcher.get_group_admin(group_id);
+    let zero_addr: ContractAddress = 0.try_into().unwrap();
+    assert(current != new_admin, 'Admin should not change yet');
+    assert(current != zero_addr, 'Admin should be set');
+
+    // New admin accepts
+    start_cheat_caller_address(contract_address, new_admin);
+    dispatcher.accept_admin(group_id);
+    stop_cheat_caller_address(contract_address);
+
+    assert(dispatcher.get_group_admin(group_id) == new_admin, 'Admin should be updated');
+    let zero_addr2: ContractAddress = 0.try_into().unwrap();
+    assert(dispatcher.get_pending_admin(group_id) == zero_addr2, 'Pending should be cleared');
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_only_admin_can_propose_transfer() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    let non_admin: ContractAddress = 0x999.try_into().unwrap();
+    start_cheat_caller_address(contract_address, non_admin);
+
+    let new_admin: ContractAddress = 0xdeadbeef.try_into().unwrap();
+    match safe_dispatcher.transfer_admin(group_id, new_admin) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'Only admin can transfer', *panic_data.at(0));
+        },
+    };
+
+    stop_cheat_caller_address(contract_address);
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_wrong_account_cannot_accept_admin() {
+    let contract_address = deploy_semaphore();
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    let new_admin: ContractAddress = 0xdeadbeef.try_into().unwrap();
+    dispatcher.transfer_admin(group_id, new_admin);
+
+    // A third party tries to accept — should fail
+    let impostor: ContractAddress = 0xbad.try_into().unwrap();
+    start_cheat_caller_address(contract_address, impostor);
+
+    match safe_dispatcher.accept_admin(group_id) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'Only pending admin can accept', *panic_data.at(0));
+        },
+    };
+
+    stop_cheat_caller_address(contract_address);
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_accept_admin_requires_pending_transfer() {
+    let contract_address = deploy_semaphore();
+    let safe_dispatcher = ISemaphoreSafeDispatcher { contract_address };
+    let dispatcher = ISemaphoreDispatcher { contract_address };
+
+    let group_id: u256 = 1;
+    dispatcher.create_group(group_id);
+
+    // No transfer proposed — accept should fail
+    match safe_dispatcher.accept_admin(group_id) {
+        Result::Ok(_) => core::panic_with_felt252('Should have panicked'),
+        Result::Err(panic_data) => {
+            assert(*panic_data.at(0) == 'No pending admin transfer', *panic_data.at(0));
+        },
+    };
 }

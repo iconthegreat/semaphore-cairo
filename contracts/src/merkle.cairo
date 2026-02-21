@@ -1,9 +1,19 @@
-/// Poseidon Merkle tree utilities
+/// Poseidon Merkle tree utilities — STARK FIELD ONLY
+///
+/// WARNING: All hashing in this module uses Poseidon over the STARK field (prime ~2^251).
+/// This is INCOMPATIBLE with the BN254-Poseidon Merkle trees used by the Semaphore V4
+/// circuit and the @semaphore-protocol/group SDK (which operate over the BN254 scalar
+/// field, prime ~2^254). Computing a root here and using it as a proof input will produce
+/// silently wrong results — the on-chain root will not match the circuit root.
+///
+/// These utilities are provided for STARK-native applications only (e.g. on-chain
+/// accumulators, non-Semaphore use cases). Do NOT use them to verify or reproduce
+/// BN254-Poseidon Merkle proofs from the Semaphore circuit.
 use core::poseidon::PoseidonTrait;
 use core::hash::HashStateTrait;
 use super::constants::{TREE_DEPTH, get_zero_hash};
 
-/// Compute Poseidon hash of two field elements
+/// Compute Poseidon hash of two field elements (STARK field — NOT BN254-compatible)
 pub fn hash_pair(left: felt252, right: felt252) -> felt252 {
     PoseidonTrait::new().update(left).update(right).finalize()
 }

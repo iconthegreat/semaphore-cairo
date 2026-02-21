@@ -8,7 +8,10 @@ export { createGroup, addMember, addMembers, removeMember, getRoot, getMerklePro
 export { generateSemaphoreProof, verifySemaphoreProof, extractVerificationKey } from "./proof.js";
 
 // Calldata
-export { encodeForStarknet } from "./calldata.js";
+export { encodeForStarknet, validateCalldataLength } from "./calldata.js";
+
+// Scope
+export { computeScope, assertProductionScope } from "./scope.js";
 
 // Types
 export type {
