@@ -4,8 +4,8 @@
 
 use super::verifier::{ISemaphoreVerifierDispatcher, ISemaphoreVerifierDispatcherTrait};
 
-/// Number of recent roots to keep per group (ring buffer size)
-pub const ROOT_HISTORY_SIZE: u8 = 20;
+/// Default root history ring buffer size (used when constructor arg is 0)
+pub const DEFAULT_ROOT_HISTORY_SIZE: u8 = 100;
 
 #[starknet::interface]
 pub trait ISemaphore<TContractState> {
@@ -50,6 +50,17 @@ pub trait ISemaphore<TContractState> {
 
     /// Check if a root is valid (present in the root history) for a group
     fn is_valid_root(self: @TContractState, group_id: u256, root: u256) -> bool;
+
+    /// Propose a new admin for a group (two-step transfer — proposed admin must call accept_admin)
+    fn transfer_admin(
+        ref self: TContractState, group_id: u256, proposed_admin: starknet::ContractAddress,
+    );
+
+    /// Accept an in-progress admin transfer (caller must be the proposed admin)
+    fn accept_admin(ref self: TContractState, group_id: u256);
+
+    /// Get the pending admin for a group (zero address if no transfer in progress)
+    fn get_pending_admin(self: @TContractState, group_id: u256) -> starknet::ContractAddress;
 }
 
 #[starknet::contract]
@@ -59,14 +70,18 @@ pub mod Semaphore {
     use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess, StoragePointerWriteAccess};
     use starknet::{ContractAddress, get_caller_address};
     use super::{ISemaphoreVerifierDispatcher, ISemaphoreVerifierDispatcherTrait};
-    use super::ROOT_HISTORY_SIZE;
+    use super::DEFAULT_ROOT_HISTORY_SIZE;
 
     #[storage]
     struct Storage {
         /// Address of the Garaga Groth16 verifier contract
         verifier_address: ContractAddress,
+        /// Root history ring buffer size (set at construction, applies to all groups)
+        root_history_size: u8,
         /// Group admin addresses
         group_admins: Map<u256, ContractAddress>,
+        /// Pending admin during a two-step admin transfer
+        pending_admins: Map<u256, ContractAddress>,
         /// Whether a group exists
         group_exists: Map<u256, bool>,
         /// Member count per group
@@ -88,6 +103,8 @@ pub mod Semaphore {
         MemberAdded: MemberAdded,
         MemberRemoved: MemberRemoved,
         SignalProcessed: SignalProcessed,
+        AdminTransferProposed: AdminTransferProposed,
+        AdminTransferAccepted: AdminTransferAccepted,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -123,9 +140,30 @@ pub mod Semaphore {
         pub scope: u256,
     }
 
+    #[derive(Drop, starknet::Event)]
+    pub struct AdminTransferProposed {
+        #[key]
+        pub group_id: u256,
+        pub current_admin: ContractAddress,
+        pub proposed_admin: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct AdminTransferAccepted {
+        #[key]
+        pub group_id: u256,
+        pub new_admin: ContractAddress,
+    }
+
     #[constructor]
-    fn constructor(ref self: ContractState, verifier_address: ContractAddress) {
+    fn constructor(
+        ref self: ContractState,
+        verifier_address: ContractAddress,
+        root_history_size: u8,
+    ) {
         self.verifier_address.write(verifier_address);
+        let size = if root_history_size == 0 { DEFAULT_ROOT_HISTORY_SIZE } else { root_history_size };
+        self.root_history_size.write(size);
     }
 
     #[abi(embed_v0)]
@@ -165,8 +203,9 @@ pub mod Semaphore {
             let history_idx = self.root_history_index.read(group_id);
             let key = composite_root_key(group_id, history_idx);
             self.root_history.write(key, new_merkle_root);
-            // Advance ring buffer index (mod ROOT_HISTORY_SIZE)
-            let next_idx = (history_idx + 1) % ROOT_HISTORY_SIZE;
+            // Advance ring buffer index (mod root_history_size)
+            let rhs = self.root_history_size.read();
+            let next_idx = (history_idx + 1) % rhs;
             self.root_history_index.write(group_id, next_idx);
 
             // Increment member count
@@ -202,8 +241,9 @@ pub mod Semaphore {
             let history_idx = self.root_history_index.read(group_id);
             let key = composite_root_key(group_id, history_idx);
             self.root_history.write(key, new_merkle_root);
-            // Advance ring buffer index (mod ROOT_HISTORY_SIZE)
-            let next_idx = (history_idx + 1) % ROOT_HISTORY_SIZE;
+            // Advance ring buffer index (mod root_history_size)
+            let rhs = self.root_history_size.read();
+            let next_idx = (history_idx + 1) % rhs;
             self.root_history_index.write(group_id, next_idx);
 
             // Decrement member count
@@ -276,6 +316,35 @@ pub mod Semaphore {
         fn is_valid_root(self: @ContractState, group_id: u256, root: u256) -> bool {
             check_root_history(self, group_id, root)
         }
+
+        fn transfer_admin(
+            ref self: ContractState, group_id: u256, proposed_admin: ContractAddress,
+        ) {
+            assert(self.group_exists.read(group_id), 'Group does not exist');
+            let caller = get_caller_address();
+            let admin = self.group_admins.read(group_id);
+            assert(caller == admin, 'Only admin can transfer');
+
+            self.pending_admins.write(group_id, proposed_admin);
+            self.emit(AdminTransferProposed { group_id, current_admin: caller, proposed_admin });
+        }
+
+        fn accept_admin(ref self: ContractState, group_id: u256) {
+            assert(self.group_exists.read(group_id), 'Group does not exist');
+            let caller = get_caller_address();
+            let pending = self.pending_admins.read(group_id);
+            let zero_addr: ContractAddress = 0.try_into().unwrap();
+            assert(pending != zero_addr, 'No pending admin transfer');
+            assert(caller == pending, 'Only pending admin can accept');
+
+            self.group_admins.write(group_id, caller);
+            self.pending_admins.write(group_id, zero_addr);
+            self.emit(AdminTransferAccepted { group_id, new_admin: caller });
+        }
+
+        fn get_pending_admin(self: @ContractState, group_id: u256) -> ContractAddress {
+            self.pending_admins.read(group_id)
+        }
     }
 
     /// Check if a root is in the group's root history or is the current root
@@ -285,9 +354,10 @@ pub mod Semaphore {
             return true;
         }
         // Search ring buffer
+        let rhs = self.root_history_size.read();
         let mut i: u8 = 0;
         loop {
-            if i >= ROOT_HISTORY_SIZE {
+            if i >= rhs {
                 break false;
             }
             let key = composite_root_key(group_id, i);

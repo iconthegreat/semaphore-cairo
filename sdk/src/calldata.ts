@@ -6,6 +6,15 @@
  * 2. Node.js WASM (garaga npm): Faster but has known issues with some proof formats
  *
  * Falls back to saving proof/VK to JSON for manual Python CLI encoding.
+ *
+ * ## Garaga version compatibility
+ *
+ * The calldata format is tested against **garaga==1.0.1** (BN254, Groth16, depth-20 VK).
+ * Garaga is under active development — the encoding format may change between versions.
+ * If the verifier contract is regenerated with a new Garaga version, re-test this module.
+ *
+ * Expected calldata length for a BN254 Groth16 proof with depth-20 VK: ~1977 felt252 values.
+ * If `encodeForStarknet` returns a materially different length, suspect a format change.
  */
 
 import type { SemaphoreFullProof } from "./types.js";
@@ -47,6 +56,28 @@ export async function encodeForStarknet(
 
   // Final fallback: export proof + VK as JSON files for manual encoding
   return exportProofForManualEncoding(proof, verificationKey);
+}
+
+/**
+ * Validate that calldata from encodeForStarknet has a plausible length.
+ *
+ * Garaga BN254 Groth16 calldata for a depth-20 VK is ~1977 felt252 values.
+ * A materially different length (< 100 or > 10000) likely indicates a format
+ * incompatibility with the on-chain verifier — throw before submitting.
+ *
+ * @throws if calldata length is outside the expected range
+ */
+export function validateCalldataLength(calldata: string[]): void {
+  const MIN_EXPECTED = 100;
+  const MAX_EXPECTED = 10000;
+  if (calldata.length < MIN_EXPECTED || calldata.length > MAX_EXPECTED) {
+    throw new Error(
+      `Garaga calldata length ${calldata.length} is outside expected range ` +
+      `[${MIN_EXPECTED}, ${MAX_EXPECTED}]. ` +
+      `This may indicate a Garaga version mismatch. ` +
+      `Expected ~1977 felt252 values for a BN254 Groth16 proof (garaga==1.0.1).`,
+    );
+  }
 }
 
 /**

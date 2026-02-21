@@ -1,4 +1,12 @@
-/// All hashing uses Poseidon for STARK-friendliness
+/// Identity helpers — STARK FIELD ONLY
+///
+/// WARNING: These functions use Poseidon over the STARK field (prime ~2^251).
+/// They are INCOMPATIBLE with the identity commitments and nullifiers produced
+/// by the Semaphore V4 circuit and @semaphore-protocol/identity SDK, which use
+/// Poseidon over the BN254 scalar field (prime ~2^254).
+///
+/// These are provided as reference implementations for STARK-native identity
+/// schemes. They cannot be used to reproduce or verify Semaphore V4 credentials.
 use core::poseidon::PoseidonTrait;
 use core::hash::HashStateTrait;
 
